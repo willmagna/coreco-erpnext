@@ -85,6 +85,11 @@ frappe.ui.form.on("Warehouse", {
 
 		frm.toggle_enable(["is_group", "company"], false);
 	},
+
+	custom_financial_limit(frm) {
+		// Safely copy the value
+		frm.set_value("custom_financial_balance", frm.doc.custom_financial_limit);
+	},
 });
 
 function convert_to_group_or_ledger(frm) {

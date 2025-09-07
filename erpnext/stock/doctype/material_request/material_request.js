@@ -5,6 +5,8 @@
 frappe.provide("erpnext.accounts.dimensions");
 erpnext.buying.setup_buying_controller();
 
+let warehouseFinancialBalance = 0;
+
 frappe.ui.form.on("Material Request", {
 	setup: function (frm) {
 		frm.custom_make_buttons = {
@@ -495,6 +497,44 @@ frappe.ui.form.on("Material Request", {
 			frm.set_value("set_from_warehouse", "");
 		}
 	},
+	set_warehouse(frm) {
+		if (frm.doc.set_warehouse) {
+			frappe.call({
+				method: "frappe.client.get",
+				args: {
+					doctype: "Warehouse",
+					name: frm.doc.set_warehouse,
+				},
+				callback: function (response) {
+					if (response.message) {
+						const warehouse = response.message;
+						warehouseFinancialBalance = warehouse.custom_financial_balance;
+						updateQtyAndTotal(frm);
+					}
+				},
+			});
+		}
+	},
+	before_save(frm) {
+		if (frm.doc["custom_warehouse_remaining_balance"] < 0) {
+			frappe.throw(__("Total não pode exceder o saldo do armazém"));
+		} else {
+			if (frm.doc.set_warehouse) {
+				frappe.call({
+					method: "frappe.client.set_value",
+					args: {
+						doctype: "Warehouse",
+						name: frm.doc.set_warehouse,
+						fieldname: "custom_financial_balance",
+						value: frm.doc["custom_warehouse_remaining_balance"],
+					},
+					callback: function (response) {
+						// if (response.message) {}
+					},
+				});
+			}
+		}
+	},
 });
 
 frappe.ui.form.on("Material Request Item", {
@@ -541,10 +581,12 @@ frappe.ui.form.on("Material Request Item", {
 			}
 		}
 	},
-
 	conversion_factor: function (frm, doctype, name) {
 		const item = locals[doctype][name];
 		frm.events.get_item_data(frm, item, false);
+	},
+	items_remove(frm) {
+		updateQtyAndTotal(frm);
 	},
 });
 
@@ -557,6 +599,7 @@ erpnext.buying.MaterialRequestController = class MaterialRequestController exten
 
 	item_code() {
 		// to override item code trigger from transaction.js
+		updateQtyAndTotal(this.frm);
 	}
 
 	validate_company_and_party() {
@@ -616,6 +659,7 @@ erpnext.buying.MaterialRequestController = class MaterialRequestController exten
 		row.amount = flt(row.qty) * flt(row.rate);
 		frappe.model.set_value(cdt, cdn, "amount", row.amount);
 		refresh_field("amount", row.name, row.parentfield);
+		updateQtyAndTotal(this.frm);
 	}
 };
 
@@ -631,5 +675,29 @@ function set_schedule_date(frm) {
 			"items",
 			"schedule_date"
 		);
+	}
+}
+
+function updateQtyAndTotal(frm) {
+	const items = frm.doc.items;
+	let material_total_quantity = 0;
+	let material_total_value = 0;
+
+	frm.set_value("custom_material_total_quantity", material_total_quantity);
+	frm.set_value("custom_material_total_value", material_total_value);
+
+	items.forEach((item) => {
+		material_total_quantity += item.qty || 0;
+		material_total_value += (item.qty || 0) * (item.rate || 0);
+	});
+
+	const remaining_balance = warehouseFinancialBalance - material_total_value;
+
+	frm.set_value("custom_material_total_quantity", material_total_quantity);
+	frm.set_value("custom_material_total_value", material_total_value);
+	frm.set_value("custom_warehouse_remaining_balance", remaining_balance);
+
+	if (remaining_balance < 0) {
+		frappe.msgprint("A soma total dos valores dos items ultrapassou o valor mensagem do armazém");
 	}
 }
